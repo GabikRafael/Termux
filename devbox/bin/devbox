@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""DevBox: a small, on-device Termux project environment manager."""
+import argparse, os, shutil, subprocess, sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE / "lib"))
+from detector import detect
+from config import load_config, project_root
+from doctor import report, missing_message
+from builder import build, run, clean, apk
+from web import web
+from package import install_feature
+from templates import create
+from android import android
+
+VERSION = "1.0.0"
+
+def say_project(path):
+    d = detect(path)
+    print(f"Project: {Path(path).resolve().name}\nType: {d['type']}")
+    return d
+
+def interactive(path):
+    print("┌─────────────────────────────────┐\n│          DEVBOX                 │\n│   Termux Development Suite      │\n└─────────────────────────────────┘")
+    say_project(path)
+    print("\n[1] Build  [2] Run  [3] Web  [4] APK\n[5] Doctor [6] Package [7] Clean [0] Exit")
+    try: choice = input("> ").strip()
+    except (EOFError, KeyboardInterrupt): return 0
+    return main([{"1":"build","2":"run","3":"web","4":"apk","5":"doctor","7":"clean"}.get(choice,"help")])
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="devbox", description="Termux Development Suite")
+    p.add_argument("--version", action="version", version=f"devbox {VERSION}")
+    sub = p.add_subparsers(dest="command")
+    sub.add_parser("help")
+    sub.add_parser("version")
+    for x in ("detect", "init", "build", "run", "package", "apk", "clean", "info", "update", "doctor"): sub.add_parser(x)
+    c=sub.add_parser("create"); c.add_argument("name"); c.add_argument("--python", action="store_const", const="python", dest="kind"); c.add_argument("--pygame", action="store_const", const="pygame", dest="kind"); c.add_argument("--cpp", action="store_const", const="cpp", dest="kind"); c.add_argument("--java", action="store_const", const="java", dest="kind"); c.add_argument("--godot", action="store_const", const="godot", dest="kind"); c.add_argument("--web", action="store_const", const="web", dest="kind")
+    w=sub.add_parser("web"); w.add_argument("--serve", action="store_true"); w.add_argument("--port", type=int)
+    i=sub.add_parser("install"); i.add_argument("feature", nargs="?")
+    a=sub.add_parser("android"); a.add_argument("action", nargs="?", default="doctor", choices=["doctor","adb","build","sign","install"]); a.add_argument("args", nargs=argparse.REMAINDER)
+    g=sub.add_parser("gamepack"); g.add_argument("file"); g.add_argument("--port", type=int, default=8000)
+    ns=p.parse_args(argv)
+    if not ns.command: return interactive(Path.cwd())
+    root=project_root(Path.cwd())
+    try:
+      if ns.command in ("help",): p.print_help()
+      elif ns.command == "version": print(f"devbox {VERSION}")
+      elif ns.command in ("detect","info"): say_project(root)
+      elif ns.command == "doctor": report()
+      elif ns.command == "create": create(Path(ns.name), ns.kind or "python")
+      elif ns.command == "init":
+        if (root/"devbox.toml").exists(): raise RuntimeError("devbox.toml already exists; refusing to overwrite")
+        d=detect(root); (root/"devbox.toml").write_text(f"[project]\nname = \"{root.name}\"\ntype = \"{d['type'].lower()}\"\n") ; print("Created devbox.toml")
+      elif ns.command == "build": build(root)
+      elif ns.command == "run": run(root)
+      elif ns.command == "package": build(root, package=True)
+      elif ns.command == "apk": apk(root)
+      elif ns.command == "clean": clean(root)
+      elif ns.command == "web": web(root, ns.serve, ns.port)
+      elif ns.command == "install": install_feature(ns.feature)
+      elif ns.command == "update": print("DevBox is installed from this checkout; update it with your Git remote, then rerun install.sh.")
+      elif ns.command == "android": android(root, ns.action, ns.args)
+      elif ns.command == "gamepack":
+        f=Path(ns.file).resolve()
+        if not f.is_file() or f.suffix != ".py": raise RuntimeError("gamepack requires an existing Python file")
+        target=f.parent; print(f"DevBox GamePack\n-------------------------\nProject: {f.name}\nEngine: Pygame\nBackend: pygbag")
+        web(target, True, ns.port, main=f); print("Build: OK\nOutput: build/web/")
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as e:
+      print(f"devbox: {e}", file=sys.stderr); return 1
+    except KeyboardInterrupt: print("\nCancelled.", file=sys.stderr); return 130
+    return 0
+if __name__ == "__main__": raise SystemExit(main())
